@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import json
 import logging
+import itertools
 import websocket
 from sortedcontainers import SortedDict
 from threading import Lock
@@ -20,65 +21,44 @@ BOOKCOL = BIDCOL + ASKCOL
 MYSQLURL = mysqlconf.URL + "BitMEX"
 
 
-class MexTicker:
-
-    def __init__(self, symbol="XBTUSD", save=False):
+class Mexsocket:
+    """ WebsocketAppを立ち上げてmessageを受信. 各symbolのTickerにmessageを流す.
+    """
+    def __init__(self, symbols=["XBTUSD", "ETHUSD"], save=False):
+        assert isinstance(symbols, list)
         self.url = ENDPOINT
-        self.symbol = symbol.replace("/","").replace("_","").upper()
-        self.logger = logging.getLogger(f"{__file__}_{self.symbol}")
-        self.engine = create_engine(MYSQLURL, echo=False)
-        self._lock = Lock()
-
-        # flag
-        self.save = save
+        self.symbols = [sym.replace("/","").replace("_","").upper() for sym in symbols]
+        self.logger = logging.getLogger(f"Mexsocket")
         self._stopFlag = False
-        self._book_partialed = False
-        
-        # MarketBook
-        self.time_book = np.array([])
-        self.book_bidnow = {} # {id : [price, size]}
-        self.book_asknow = {}
-        self.book_bid = np.array([]) # snapshot
-        self.book_ask = np.array([])
-        # MarketActivity
-        self.act = {
-            "id": np.array([]),   "rcvTime" : np.array([]), "mktTime" : np.array([]), "direction": np.array([]),
-            "side": np.array([]), "price"   : np.array([]), "amount"  : np.array([]), "symbol": np.array([])
-        }
-        # lv1
-        self._bestBid = None
-        self._bestAsk = None
-        self.lv1 = {
-            "rcvTime": np.array([]), "midPrice": np.array([]), "symbol": np.array([]),
-            "bestBid": np.array([]), "bestAsk": np.array([]), 
-        }
-        # latency
-        self.latency = 0
 
-        # flag_time
-        self.time_cut = time.time()
-        self.time_push = datetime.datetime.now()
-        self.laststack_book = time.time()
-        self._hold_time = 30
+        # sym毎のtickerを設定
+        self.tickers = {sym: MexTicker2(sym, save) for sym in self.symbols}
 
         self.set_websocket()
-    
+
 
     def set_websocket(self):
         def on_message(ws, message):
             message = json.loads(message)
-            self.logger.debug(message)
-            if not "table" in message.keys(): return None
-            elif message["table"] == "orderBookL2_25": self.on_message_book25(message)
-            elif message["table"] == "trade": self.on_message_trade(message)
+            if not "table" in message.keys(): 
+                return None
+            elif message["table"] == "orderBookL2_25":
+                sym = message["data"][0]["symbol"]
+                self.tickers[sym].on_message_book25(message)
+            elif message["table"] == "trade":
+                sym = message["data"][0]["symbol"]
+                self.tickers[sym].on_message_trade(message)
+
         def on_open(ws):
             ws.send(json.dumps({
                 "op": "subscribe", 
-                "args": [f"{ch}:{self.symbol}" for ch in ["trade", "orderBookL2_25"]] }))
+                "args": [f"{ch}:{sym}" for ch, sym in itertools.product(["trade", "orderBookL2_25"], self.symbols)] }))
             self.logger.info("BITMEX Websocket connected.")
+
         def on_error(ws, error):
             self.logger.info("BITMEX Websocket error.")
-            self.logger.error(error)
+            self.logger.error(error, exc_info=True)
+
         def on_close(ws):
             self.logger.info("BITMEX Websocket closed.")
 
@@ -97,9 +77,64 @@ class MexTicker:
 
 
     def close(self):
-        self._stopFlag = True
-        self.engine.dispose()
+        self.logger.info("called close().")
         self.ws.close()
+        self.stoFlag = True
+        for sym,tick in self.tickers.items():
+            tick.close()
+
+
+    def manage_data(self):
+        while not self._stopFlag:
+            for ticker in self.tickers.values():
+                ticker.manage_data()
+
+
+
+class MexTicker2:
+    """ 各symの板と約定履歴のmessageをparseし保持する.
+        databaseへのpushもここで行う.
+    """
+    def __init__(self, symbol="XBTUSD", save=False, hold_time=30):
+        self.symbol = symbol
+        self.logger = logging.getLogger(f"Mexsocket.{self.symbol}")
+        self.engine = create_engine(MYSQLURL, echo=False)
+        self._lock = Lock()
+        self._hold_time = hold_time
+        
+        # flag
+        self.save = save
+        self._book_partialed = False
+        
+        # MarketBook
+        self.time_book = np.array([])
+        self.book_bidnow = {} # {id : [price, size]}
+        self.book_asknow = {}
+        self.book_bid = np.array([]) # snapshot
+        self.book_ask = np.array([])
+        # MarketActivity
+        self.act = {
+            "id": np.array([]),   "rcvTime" : np.array([]), "mktTime" : np.array([]), "direction": np.array([]),
+            "side": np.array([]), "price"   : np.array([]), "amount"  : np.array([]), "symbol": np.array([])
+        }
+        # lv1
+        self._bestBid = None
+        self._bestAsk = None
+        self.lv1 = {
+            "rcvTime": np.array([]), "midPrice": np.array([]), "symbol": np.array([]),
+            "bestBid": np.array([]), "bestAsk": np.array([]), "id": np.array([])
+        }
+        # latency
+        self.latency = 0
+
+        # flag_time
+        self.time_cut = time.time()
+        self.time_push = datetime.datetime.now()
+        self.laststack_book = time.time()
+
+
+    def close(self):
+        self.engine.dispose()
         self.logger.info("called close().")
 
 
@@ -109,6 +144,7 @@ class MexTicker:
         Args:
             message (dict): {data: [{"side":, "price":, ...}, {}, {}]}
         """
+        # self.logger.debug(message)
         message = message["data"]
         # 必要な情報をndarrayで格納 (*板寄せ時はside情報がBlankになる)
         ids = np.array([self.getId() for m in message])
@@ -135,6 +171,7 @@ class MexTicker:
     def on_message_book25(self, message):
         """ l2_25 messageのfeedhandler
         """
+        # self.logger.debug(message)
         if message["action"] == "partial": self.partial_board(message)
         elif message["action"] == "update": self.update_board(message)
         elif message["action"] == "delete": self.delete_board(message)
@@ -151,6 +188,7 @@ class MexTicker:
             with self._lock:
                 self._bestBid = self.bestBid
                 self._bestAsk = self.bestAsk
+                self.lv1["id"] = np.append(self.lv1["id"], self.getId())
                 self.lv1["rcvTime"] = np.append(self.lv1["rcvTime"], datetime.datetime.now())
                 self.lv1["bestBid"] = np.append(self.lv1["bestBid"], self._bestBid)
                 self.lv1["bestAsk"] = np.append(self.lv1["bestAsk"], self._bestAsk)
@@ -161,33 +199,32 @@ class MexTicker:
     def manage_data(self):
         """ DBへのpushおよび過去Dataのdrop
         """
-        while not self._stopFlag:
-            now = datetime.datetime.now()
-            try:
-                # drop(hold_time secに1回)
-                if time.time() - self.time_cut > self._hold_time:
-                    self.logger.debug("try drop")
-                    with self._lock:
-                        kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
-                        self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
-                        self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
-                        self.time_book, self.book_bid, self.book_ask = \
-                            self.extract_from_list([self.time_book, self.book_bid, self.book_ask], kiritoriTime)
-                        self.time_cut = time.time()
+        now = datetime.datetime.now()
+        try:
+            # drop(hold_time secに1回)
+            if time.time() - self.time_cut > self._hold_time:
+                self.logger.debug("try drop")
+                with self._lock:
+                    kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
+                    self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
+                    self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
+                    self.time_book, self.book_bid, self.book_ask = \
+                        self.extract_from_list([self.time_book, self.book_bid, self.book_ask], kiritoriTime)
+                    self.time_cut = time.time()
 
-                # 書き込み
-                if self.save and now - self.time_push > datetime.timedelta(seconds=10):
-                    self.logger.debug("try push")
-                    with self._lock:
-                        act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
-                        lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
-                        book  = self.extract_from_list(deepcopy([self.time_book, self.book_bid, self.book_ask]), self.time_push)
-                    # 直近の記録時間を更新する.
-                    self.to_MySQL(act, book, lv1)
-                    self.time_push = now
-            except Exception as e:
-                self.logger.info(e, exc_info=True)
-            time.sleep(1.0)
+            # 書き込み
+            if self.save and now - self.time_push > datetime.timedelta(seconds=10):
+                self.logger.debug("try push")
+                with self._lock:
+                    act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
+                    lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
+                    book  = self.extract_from_list(deepcopy([self.time_book, self.book_bid, self.book_ask]), self.time_push)
+                # 直近の記録時間を更新する.
+                self.to_MySQL(act, book, lv1)
+                self.time_push = now
+        except Exception as e:
+            self.logger.info(e, exc_info=True)
+        time.sleep(2.0)
 
 
     def to_MySQL(self, act: dict, book: list, lv1: dict):

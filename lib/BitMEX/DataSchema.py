@@ -26,8 +26,9 @@ class market_activity(BASE):
 
 class lv1(BASE):
     __tablename__ = "lv1"
+    id = Column(BIGINT(unsigned=True), nullable=False, primary_key=True)
     symbol = Column(VARCHAR(12), primary_key=True)
-    rcvTime = Column(DATETIME(fsp=3), primary_key=True)
+    rcvTime = Column(DATETIME(fsp=3))
     bestBid = Column(FLOAT())
     bestAsk = Column(FLOAT())
     midPrice = Column(FLOAT())
