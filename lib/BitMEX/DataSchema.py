@@ -15,7 +15,7 @@ BASE = declarative_base()
 class market_activity(BASE):
     __tablename__ = "market_activity"
     id = Column(BIGINT(unsigned=True), nullable=False, primary_key=True)
-    symbol = Column(VARCHAR(12), nullable=False)
+    symbol = Column(VARCHAR(12), nullable=False, primary_key=True)
     rcvTime = Column(DATETIME(fsp=3), nullable=False)
     mktTime = Column(DATETIME(fsp=3), nullable=False)
     side = Column(VARCHAR(10), nullable=False)
