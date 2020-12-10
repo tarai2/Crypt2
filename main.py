@@ -23,6 +23,8 @@ bf.logger.setLevel(logging.DEBUG)
 
 future_list = []
 with futures.ThreadPoolExecutor(max_workers=2) as executor:
-    future_list.append(executor.submit(fn=bf.run))
-    future_list.append(executor.submit(fn=bf.manage_data))
+    # future_list.append(executor.submit(fn=bf.run))
+    # future_list.append(executor.submit(fn=bf.manage_data))
+    future_list.append(executor.submit(fn=mex.run))
+    future_list.append(executor.submit(fn=mex.manage_data))
     _ = futures.as_completed(fs=future_list)

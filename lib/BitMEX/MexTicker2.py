@@ -107,11 +107,13 @@ class MexTicker2:
         self._book_partialed = False
         
         # MarketBook
-        self.time_book = np.array([])
         self.book_bidnow = {} # {id : [price, size]}
         self.book_asknow = {}
-        self.book_bid = np.array([]) # snapshot
-        self.book_ask = np.array([])
+        self.book = {
+            "rcvTime": np.array([datetime.datetime.now()]),
+            "bid": np.ones([1, LEVEL*2]) * np.nan,
+            "ask": np.ones([1, LEVEL*2]) * np.nan
+        }
         # MarketActivity
         self.act = {
             "id": np.array([]),   "rcvTime" : np.array([]), "mktTime" : np.array([]), "direction": np.array([]),
@@ -179,9 +181,9 @@ class MexTicker2:
         # snapshotの更新
         if time.time()-self.laststack_book>0.1 and len(self.book_asknow)>LEVEL and len(self.book_bidnow)>LEVEL:
             with self._lock:
-                self.book_bid  = np.append(self.book_bid, self.get_board("bid",LEVEL).reshape(1,-1), axis=0) if self.book_bid.shape[0]>0 else self.get_board("bid",LEVEL).reshape(1,-1)
-                self.book_ask  = np.append(self.book_ask, self.get_board("ask",LEVEL).reshape(1,-1), axis=0) if self.book_ask.shape[0]>0 else self.get_board("ask",LEVEL).reshape(1,-1)
-                self.time_book = np.append(self.time_book, datetime.datetime.now())
+                self.book["bid"]  = np.append(self.book["bid"], self.get_board("bid",LEVEL).reshape(1,-1), axis=0) if self.book["bid"].shape[0]>0 else self.get_board("bid",LEVEL).reshape(1,-1)
+                self.book["ask"]  = np.append(self.book["ask"], self.get_board("ask",LEVEL).reshape(1,-1), axis=0) if self.book["ask"].shape[0]>0 else self.get_board("ask",LEVEL).reshape(1,-1)
+                self.book["rcvTime"] = np.append(self.book["rcvTime"], datetime.datetime.now())
                 self.laststack_book = time.time()
         # lv1の更新
         if self._bestBid != self.bestBid or self._bestAsk != self.bestAsk:
@@ -208,8 +210,8 @@ class MexTicker2:
                     kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
                     self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
                     self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
-                    self.time_book, self.book_bid, self.book_ask = \
-                        self.extract_from_list([self.time_book, self.book_bid, self.book_ask], kiritoriTime)
+                    self.book["rcvTime"], self.book["bid"], self.book["ask"] = \
+                        self.extract_from_list([self.book["rcvTime"], self.book["bid"], self.book["ask"]], kiritoriTime)
                     self.time_cut = time.time()
 
             # 書き込み
@@ -218,7 +220,7 @@ class MexTicker2:
                 with self._lock:
                     act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
                     lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
-                    book  = self.extract_from_list(deepcopy([self.time_book, self.book_bid, self.book_ask]), self.time_push)
+                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"]]), self.time_push)
                 # 直近の記録時間を更新する.
                 self.to_MySQL(act, book, lv1)
                 self.time_push = now

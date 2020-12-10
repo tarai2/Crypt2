@@ -37,9 +37,11 @@ class BfTicker:
         # MarketBook
         self.book_bidnow = SortedDict() # {id : [price, size]}
         self.book_asknow = SortedDict()
-        self.time_book = np.array([datetime.datetime.now()])
-        self.book_bid = np.ones([1, LEVEL*2])*np.nan # snapshot
-        self.book_ask = np.ones([1, LEVEL*2])*np.nan
+        self.book = {
+            "rcvTime": np.array([datetime.datetime.now()]),
+            "bid": np.ones([1, LEVEL*2])*np.nan,
+            "ask": np.ones([1, LEVEL*2])*np.nan
+        }
         # MarketActivity
         self.act = {
             "id": np.array([]), "symbol": np.array([]),
@@ -98,8 +100,8 @@ class BfTicker:
         self.merge(self.book_bidnow, message["bids"])
         self.merge(self.book_bidnow, message["asks"])
         # snapshot更新
-        bids = self.get_board(LEVEL, "bid")
-        asks = self.get_board(LEVEL, "ask")
+        bids = self.get_board("bid", LEVEL)
+        asks = self.get_board("ask", LEVEL)
         self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
         self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
         self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
@@ -122,17 +124,18 @@ class BfTicker:
             self.lv1["symbol"] = np.append(self.lv1["symbol"], self.symbol)
             self._mid_last = message["mid_price"]
         self.logger.debug("update lv1")
+
         # snapshot更新
         if time.time() - self._time_update_snapshot > 0.1:
-            bids = self.get_board(LEVEL, "bid")
-            asks = self.get_board(LEVEL, "ask")
+            bids = self.get_board("bid", LEVEL)
+            asks = self.get_board("ask", LEVEL)
+            self.logger.debug("get board")
             if bids.shape[0]>2*LEVEL-1 and asks.shape[0]>2*LEVEL-1:
                 self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
                 self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
                 self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
                 self._time_update_snapshot = time.time()
-        self.logger.debug(self.lv1["midPrice"])
-
+            self.logger.debug(self.lv1["midPrice"][-1])
         # strategyの実行
         # if self.on_board_handler is not None:
         #     await self.on_board_handler(message) #message["id","bids","asks"]
@@ -160,8 +163,8 @@ class BfTicker:
                     kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
                     self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
                     self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
-                    self.time_book, self.book_bid, self.book_ask = \
-                        self.extract_from_list([self.time_book, self.book_bid, self.book_ask], kiritoriTime)
+                    self.book["rcvTime"], self.book["bid"], self.book["ask"] = \
+                        self.extract_from_list([self.book["rcvTime"], self.book["bid"], self.book["ask"]], kiritoriTime)
                     self.time_cut = time.time()
 
             # 書き込み
@@ -170,7 +173,7 @@ class BfTicker:
                 with self._lock:
                     act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
                     lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
-                    book  = self.extract_from_list(deepcopy([self.time_book, self.book_bid, self.book_ask]), self.time_push)
+                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"]]), self.time_push)
                 # 直近の記録時間を更新する.
                 self.to_MySQL(act, book, lv1)
                 self.time_push = now
@@ -215,10 +218,10 @@ class BfTicker:
     def get_board(self, side="bid", level=10):
         # 近傍10levelを [price,...,size,,...] で返す.
         if side == "bid":
-            res = np.array(self.book_bidnow.values())
+            res = np.array(self.book_bidnow.items())
             res = res[np.argsort(res[:,0])][::-1][:level].flatten("F")
         if side == "ask":
-            res = np.array(self.book_asknow.values())
+            res = np.array(self.book_asknow.items())
             res = res[np.argsort(res[:,0])][::+1][:level].flatten("F")
         return res
 
@@ -346,10 +349,3 @@ class Bfsocket:
         while not self._stopFlag:
             for ticker in self.tickers.values():
                 ticker.manage_data()
-
-
-60759532122179943523
-60759533067870018874
-18446744073709551615
-1607594624133092554
-1600000000000000000
