@@ -110,6 +110,7 @@ class MexTicker2:
         self.book_bidnow = {} # {id : [price, size]}
         self.book_asknow = {}
         self.book = {
+            "id": np.array([self.getId()]),
             "rcvTime": np.array([datetime.datetime.now()]),
             "bid": np.ones([1, LEVEL*2]) * np.nan,
             "ask": np.ones([1, LEVEL*2]) * np.nan
@@ -181,8 +182,9 @@ class MexTicker2:
         # snapshotの更新
         if time.time()-self.laststack_book>0.1 and len(self.book_asknow)>LEVEL and len(self.book_bidnow)>LEVEL:
             with self._lock:
-                self.book["bid"]  = np.append(self.book["bid"], self.get_board("bid",LEVEL).reshape(1,-1), axis=0) if self.book["bid"].shape[0]>0 else self.get_board("bid",LEVEL).reshape(1,-1)
-                self.book["ask"]  = np.append(self.book["ask"], self.get_board("ask",LEVEL).reshape(1,-1), axis=0) if self.book["ask"].shape[0]>0 else self.get_board("ask",LEVEL).reshape(1,-1)
+                self.book["id"] = np.append(self.book["id"], self.getId())
+                self.book["bid"] = np.append(self.book["bid"], self.get_board("bid",LEVEL).reshape(1,-1), axis=0) if self.book["bid"].shape[0]>0 else self.get_board("bid",LEVEL).reshape(1,-1)
+                self.book["ask"] = np.append(self.book["ask"], self.get_board("ask",LEVEL).reshape(1,-1), axis=0) if self.book["ask"].shape[0]>0 else self.get_board("ask",LEVEL).reshape(1,-1)
                 self.book["rcvTime"] = np.append(self.book["rcvTime"], datetime.datetime.now())
                 self.laststack_book = time.time()
         # lv1の更新
@@ -210,8 +212,8 @@ class MexTicker2:
                     kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
                     self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
                     self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
-                    self.book["rcvTime"], self.book["bid"], self.book["ask"] = \
-                        self.extract_from_list([self.book["rcvTime"], self.book["bid"], self.book["ask"]], kiritoriTime)
+                    self.book["rcvTime"], self.book["id"], self.book["bid"], self.book["ask"] = \
+                        self.extract_from_list([self.book["rcvTime"], self.book["id"], self.book["bid"], self.book["ask"]], kiritoriTime)
                     self.time_cut = time.time()
 
             # 書き込み
@@ -220,13 +222,13 @@ class MexTicker2:
                 with self._lock:
                     act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
                     lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
-                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"]]), self.time_push)
+                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"], self.book["id"]]), self.time_push)
                 # 直近の記録時間を更新する.
                 self.to_MySQL(act, book, lv1)
                 self.time_push = now
         except Exception as e:
-            self.logger.info(e, exc_info=True)
-        time.sleep(2.0)
+            self.logger.info(e, exc_info=False)
+        time.sleep(3.0)
 
 
     def to_MySQL(self, act: dict, book: list, lv1: dict):
@@ -242,8 +244,8 @@ class MexTicker2:
             df_lv1 = pd.DataFrame(lv1)
             try:
                 df_book = pd.DataFrame(
-                    np.concatenate((book[0].reshape(-1,1), book[1], book[2]), axis=1), 
-                    columns=["rcvTime"]+BOOKCOL)
+                    np.concatenate((book[0].reshape(-1,1), book[1], book[2], book[3].reshape(-1,1)), axis=1), 
+                    columns=["rcvTime"]+BOOKCOL+["id"])
                 df_book["symbol"] = self.symbol
             except:
                 df_book = pd.DataFrame(columns=BOOKCOL)
@@ -363,4 +365,4 @@ class MexTicker2:
 
     @staticmethod
     def getId():
-        return str(time.time_ns())
+        return str(time.time_ns()) + str(np.random.randint(9))

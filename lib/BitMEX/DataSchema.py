@@ -36,8 +36,9 @@ class lv1(BASE):
 
 class market_book(BASE):
     __tablename__ = "market_book"
+    id = Column(BIGINT(unsigned=True), nullable=False, primary_key=True)
     symbol = Column(VARCHAR(12), primary_key=True)
-    rcvTime = Column(DATETIME(fsp=3), nullable=False, primary_key=True)
+    rcvTime = Column(DATETIME(fsp=3), nullable=False)
 for i in range(1, LEVEL+1):
     setattr(market_book, f"bidPrice{i}", Column(FLOAT()))
     setattr(market_book, f"bidVol{i}", Column(FLOAT()))
@@ -69,8 +70,8 @@ def create():
                                           bind=engine))
     try:
         BASE.metadata.create_all(bind=engine)
-    except:
-        pass
+    except Exception as e:
+        print(e)
     finally:
         session.close()
         engine.dispose()

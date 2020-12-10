@@ -1,0 +1,2 @@
+2020-12-10 21:19:56.824|INFO    |[Bfsocket: BfTicker.on_open 324]|BitFlyer Websocket connected.
+2020-12-10 21:19:57.622|INFO    |[Mexsocket: MexTicker2.on_open 56]|BITMEX Websocket connected.

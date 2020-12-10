@@ -38,6 +38,7 @@ class BfTicker:
         self.book_bidnow = SortedDict() # {id : [price, size]}
         self.book_asknow = SortedDict()
         self.book = {
+            "id": np.array([self.getId()]),
             "rcvTime": np.array([datetime.datetime.now()]),
             "bid": np.ones([1, LEVEL*2])*np.nan,
             "ask": np.ones([1, LEVEL*2])*np.nan
@@ -81,17 +82,18 @@ class BfTicker:
         amount_arr = np.array([deal["size"] for deal in message])
         mktTime_arr = np.array([self.date_fmt(deal["exec_date"]) for deal in message])
         rcvTime_arr = np.array([t for deal in message])
-        self.act["id"] = np.append(self.act["id"], np.array([self.getId() for i in range(len(message))]))
-        self.act["symbol"] = np.append(self.act["symbol"], [self.symbol for i in amount_arr])
-        self.act["side"] = np.append(self.act["side"], side_arr)
-        self.act["price"] = np.append(self.act["price"], price_arr)
-        self.act["amount"] = np.append(self.act["amount"], amount_arr)
-        self.act["mktTime"] = np.append(self.act["mktTime"], mktTime_arr)
-        self.act["rcvTime"] = np.append(self.act["rcvTime"], rcvTime_arr)
-        self.act["buy_order_id"] = np.append(self.act["buy_order_id"], np.array([deal["buy_child_order_acceptance_id"] for deal in message]))
-        self.act["sell_order_id"] = np.append(self.act["sell_order_id"], np.array([deal["sell_child_order_acceptance_id"] for deal in message]))
-        self.latency = (t - self.act["mktTime"][-1]).total_seconds()
-        self.logger.debug(self.latency)
+        with self._lock:
+            self.act["id"] = np.append(self.act["id"], np.array([self.getId() for i in range(len(message))]))
+            self.act["symbol"] = np.append(self.act["symbol"], [self.symbol for i in amount_arr])
+            self.act["side"] = np.append(self.act["side"], side_arr)
+            self.act["price"] = np.append(self.act["price"], price_arr)
+            self.act["amount"] = np.append(self.act["amount"], amount_arr)
+            self.act["mktTime"] = np.append(self.act["mktTime"], mktTime_arr)
+            self.act["rcvTime"] = np.append(self.act["rcvTime"], rcvTime_arr)
+            self.act["buy_order_id"] = np.append(self.act["buy_order_id"], np.array([deal["buy_child_order_acceptance_id"] for deal in message]))
+            self.act["sell_order_id"] = np.append(self.act["sell_order_id"], np.array([deal["sell_child_order_acceptance_id"] for deal in message]))
+            self.latency = (t - self.act["mktTime"][-1]).total_seconds()
+            self.logger.debug(self.latency)
 
 
     def on_message_partial(self, message):
@@ -102,40 +104,45 @@ class BfTicker:
         # snapshot更新
         bids = self.get_board("bid", LEVEL)
         asks = self.get_board("ask", LEVEL)
-        self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
-        self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
-        self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
-        self.logger.debug("patial message processed")
+        with self._lock:
+            self.book["id"] = np.append(self.book["id"], self.getId())
+            self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
+            self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
+            self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
+            self.logger.debug("patial message processed")
 
 
     def on_message_diff(self, message):
         self.logger.debug("diff message")
         t = datetime.datetime.now()
-        # 辞書更新
-        self.merge(self.book_bidnow, message["bids"])
-        self.merge(self.book_asknow, message["asks"])
-        # LV1保存
-        if message["mid_price"]!=self._mid_last:
-            self.lv1["id"] = np.append(self.lv1["id"], self.getId())
-            self.lv1["rcvTime"] = np.append(self.lv1["rcvTime"], t)
-            self.lv1["bestBid"] = np.append(self.lv1["bestBid"], self.bestBid)
-            self.lv1["bestAsk"] = np.append(self.lv1["bestAsk"], self.bestAsk)
-            self.lv1["midPrice"] = np.append(self.lv1["midPrice"], float(message["mid_price"]))
-            self.lv1["symbol"] = np.append(self.lv1["symbol"], self.symbol)
-            self._mid_last = message["mid_price"]
-        self.logger.debug("update lv1")
+        with self._lock:
+            # 辞書更新
+            self.merge(self.book_bidnow, message["bids"])
+            self.merge(self.book_asknow, message["asks"])
+            # LV1保存
+            if message["mid_price"]!=self._mid_last:
+                self.lv1["id"] = np.append(self.lv1["id"], self.getId())
+                self.lv1["rcvTime"] = np.append(self.lv1["rcvTime"], t)
+                self.lv1["bestBid"] = np.append(self.lv1["bestBid"], self.bestBid)
+                self.lv1["bestAsk"] = np.append(self.lv1["bestAsk"], self.bestAsk)
+                self.lv1["midPrice"] = np.append(self.lv1["midPrice"], float(message["mid_price"]))
+                self.lv1["symbol"] = np.append(self.lv1["symbol"], self.symbol)
+                self._mid_last = message["mid_price"]
+            self.logger.debug("update lv1")
 
         # snapshot更新
         if time.time() - self._time_update_snapshot > 0.1:
-            bids = self.get_board("bid", LEVEL)
-            asks = self.get_board("ask", LEVEL)
-            self.logger.debug("get board")
-            if bids.shape[0]>2*LEVEL-1 and asks.shape[0]>2*LEVEL-1:
-                self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
-                self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
-                self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
-                self._time_update_snapshot = time.time()
-            self.logger.debug(self.lv1["midPrice"][-1])
+            with self._lock:
+                bids = self.get_board("bid", LEVEL)
+                asks = self.get_board("ask", LEVEL)
+                self.logger.debug("get board")
+                if bids.shape[0]>2*LEVEL-1 and asks.shape[0]>2*LEVEL-1:
+                    self.book["id"] = np.append(self.book["id"], self.getId())
+                    self.book["rcvTime"] = np.append(self.book["rcvTime"], t)
+                    self.book["bid"] = np.append(self.book["bid"], bids.reshape(1,-1), axis=0)
+                    self.book["ask"] = np.append(self.book["ask"], asks.reshape(1,-1), axis=0)
+                    self._time_update_snapshot = time.time()
+                self.logger.debug(self.lv1["midPrice"][-1])
         # strategyの実行
         # if self.on_board_handler is not None:
         #     await self.on_board_handler(message) #message["id","bids","asks"]
@@ -163,8 +170,8 @@ class BfTicker:
                     kiritoriTime = datetime.datetime.now() - datetime.timedelta(seconds=self._hold_time)
                     self.act = self.extract_from_dict(deepcopy(self.act), "rcvTime", kiritoriTime)
                     self.lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", kiritoriTime)
-                    self.book["rcvTime"], self.book["bid"], self.book["ask"] = \
-                        self.extract_from_list([self.book["rcvTime"], self.book["bid"], self.book["ask"]], kiritoriTime)
+                    self.book["rcvTime"], self.book["id"], self.book["bid"], self.book["ask"] = \
+                        self.extract_from_list([self.book["rcvTime"], self.book["id"], self.book["bid"], self.book["ask"]], kiritoriTime)
                     self.time_cut = time.time()
 
             # 書き込み
@@ -173,13 +180,13 @@ class BfTicker:
                 with self._lock:
                     act = self.extract_from_dict(deepcopy(self.act), "rcvTime", self.time_push)
                     lv1 = self.extract_from_dict(deepcopy(self.lv1), "rcvTime", self.time_push)
-                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"]]), self.time_push)
+                    book  = self.extract_from_list(deepcopy([self.book["rcvTime"], self.book["bid"], self.book["ask"], self.book["id"]]), self.time_push)
                 # 直近の記録時間を更新する.
                 self.to_MySQL(act, book, lv1)
                 self.time_push = now
         except Exception as e:
             self.logger.info(e, exc_info=True)
-        time.sleep(2.0)
+        time.sleep(3.0)
 
 
     def to_MySQL(self, act: dict, book: list, lv1: dict):
@@ -195,8 +202,8 @@ class BfTicker:
             df_lv1 = pd.DataFrame(lv1)
             try:
                 df_book = pd.DataFrame(
-                    np.concatenate((book[0].reshape(-1,1), book[1], book[2]), axis=1), 
-                    columns=["rcvTime"]+BOOKCOL)
+                    np.concatenate((book[0].reshape(-1,1), book[1], book[2], book[3].reshape(-1,1)), axis=1), 
+                    columns=["rcvTime"]+BOOKCOL+["id"])
                 df_book["symbol"] = self.symbol
             except:
                 df_book = pd.DataFrame(columns=BOOKCOL)
@@ -210,7 +217,7 @@ class BfTicker:
             self.engine.dispose()
             
         except Exception as e:
-            self.logger.error(e, exc_info=True)
+            self.logger.error(e, exc_info=False)
             con.close()
             self.engine.dispose()
 
