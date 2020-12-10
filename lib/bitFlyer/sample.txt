@@ -1,0 +1,1 @@
+{'jsonrpc': '2.0', 'method': 'channelMessage', 'params': {'channel': 'lightning_executions_FX_BTC_JPY', 'message': [{'id': 2058949826, 'side': 'SELL', 'price': 2037613.0, 'size': 0.01, 'exec_date': '2020-12-08T10:27:26.8841724Z', 'buy_child_order_acceptance_id': 'JRF20201208-102726-186015', 'sell_child_order_acceptance_id': 'JRF20201208-102726-187043'}]}}

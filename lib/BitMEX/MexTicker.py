@@ -9,15 +9,15 @@ from threading import Lock
 from sqlalchemy import create_engine
 from copy import deepcopy
 from ..conf import mysqlconf
+from .DataSchema import DBNAME,LEVEL
 
 websocket.setdefaulttimeout(10)
-LEVEL = 15
 HOUR9 = datetime.timedelta(hours=9)
 ENDPOINT = "wss://www.bitmex.com/realtime"
 BIDCOL = [f"bidPrice{i}" for i in range(1,LEVEL+1)] + [f"bidVol{i}" for i in range(1,LEVEL+1)]
 ASKCOL = [f"askPrice{i}" for i in range(1,LEVEL+1)] + [f"askVol{i}" for i in range(1,LEVEL+1)]
 BOOKCOL = BIDCOL + ASKCOL
-MYSQLURL = mysqlconf.URL + "BitMEX"
+MYSQLURL = mysqlconf.URL + DBNAME
 
 
 class MexTicker:
@@ -324,4 +324,4 @@ class MexTicker:
 
     @staticmethod
     def getId():
-        return str(time.time_ns())
+        return str(time.time_ns()) + str(np.random.randint(9))

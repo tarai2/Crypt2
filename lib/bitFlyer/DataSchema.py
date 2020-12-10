@@ -7,8 +7,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.mysql import DATETIME, DOUBLE, FLOAT, INTEGER, TEXT, JSON, VARCHAR, BIGINT
 
 from ..conf.mysqlconf import URL
-LEVEL = 15
-DBNAME = "BitMEX"
+LEVEL = 20
+DBNAME = "bitFlyer"
 BASE = declarative_base()
 
 
@@ -21,7 +21,8 @@ class market_activity(BASE):
     side = Column(VARCHAR(10), nullable=False)
     price = Column(FLOAT(), nullable=False)
     amount = Column(FLOAT(), nullable=False)
-    direction = Column(VARCHAR(20))
+    buy_order_id = Column(VARCHAR(30))
+    sell_order_id = Column(VARCHAR(30))
 
 
 class lv1(BASE):
